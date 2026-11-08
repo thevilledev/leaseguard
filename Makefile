@@ -4,6 +4,8 @@
 #   make unit       lease file and import tests (no privileges)
 #   make test       datapath tests through the verifier (root)
 #   make e2e        end-to-end tests in network namespaces (root)
+#   make interop    against real DHCP servers and clients (root); pick with
+#                   SERVERS=, CLIENTS= and RELAY=1
 #   make install    install to $(DESTDIR)$(PREFIX)
 
 CC      ?= cc
@@ -32,7 +34,7 @@ SRCS := src/main.c src/daemon.c src/dp.c src/import.c src/leases.c src/nl.c src/
 	src/util.c
 OBJS := $(SRCS:src/%.c=$(BUILD)/%.o) $(BUILD)/bpf_obj.o
 
-.PHONY: all unit test e2e install clean
+.PHONY: all unit test e2e interop install clean
 
 all: $(BIN)
 
@@ -67,6 +69,20 @@ test: $(TESTBIN) $(BPF_OBJ)
 
 e2e: $(BIN)
 	LEASEGUARD=$(abspath $(BIN)) tests/e2e.sh
+
+SERVERS ?= dnsmasq kea isc libvirt
+CLIENTS ?= udhcpc dhclient dhcpcd
+RELAY   ?= 0
+
+# Every SERVERS x CLIENTS pair; pairs whose tools are missing are skipped
+# (exit 77) unless REQUIRE=1.
+interop: $(BIN)
+	@fail=; for s in $(SERVERS); do for c in $(CLIENTS); do \
+		LEASEGUARD=$(abspath $(BIN)) SERVER=$$s CLIENT=$$c RELAY=$(RELAY) \
+			tests/interop.sh; rc=$$?; \
+		[ $$rc -eq 0 ] || [ $$rc -eq 77 ] || fail="$$fail $$s/$$c"; \
+	done; done; \
+	if [ -n "$$fail" ]; then echo; echo "interop failed:$$fail"; exit 1; fi
 
 install: $(BIN)
 	install -D -m 0755 $(BIN) $(DESTDIR)$(PREFIX)/sbin/leaseguard

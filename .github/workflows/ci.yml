@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  # Weekly, to catch DHCP server and client updates in the distribution.
+  schedule:
+    - cron: '17 4 * * 1'
 
 permissions:
   contents: read
@@ -38,3 +42,77 @@ jobs:
 
       - name: End-to-end tests
         run: sudo ATTACH=${{ matrix.attach }} make e2e
+
+  # leaseguard between real DHCP servers and clients: every client against
+  # one server per job. See tests/interop.sh.
+  interop:
+    name: interop (${{ matrix.server }}${{ matrix.relay == 1 && ', relayed' || '' }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        server: [dnsmasq, kea, isc, libvirt]
+        relay: [0]
+        include:
+          - { server: dnsmasq, relay: 1 }
+          - { server: kea, relay: 1 }
+          - { server: isc, relay: 1 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          case "${{ matrix.server }}" in
+          dnsmasq) pkgs=dnsmasq-base ;;
+          kea)     pkgs=kea-dhcp4-server ;;
+          isc)     pkgs=isc-dhcp-server ;;
+          libvirt) pkgs="dnsmasq-base libvirt-daemon" ;;   # libvirt_leaseshelper
+          esac
+          [ "${{ matrix.relay }}" = 1 ] && pkgs="$pkgs isc-dhcp-relay"
+          # Install the servers without starting their system services.
+          printf '#!/bin/sh\nexit 101\n' | sudo tee /usr/sbin/policy-rc.d >/dev/null
+          sudo chmod +x /usr/sbin/policy-rc.d
+          sudo apt-get update
+          # shellcheck disable=SC2086 # $pkgs is a list
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libbpf-dev make gcc iproute2 iputils-ping \
+            busybox isc-dhcp-client dhcpcd-base $pkgs
+
+      - name: Unload AppArmor profiles of the DHCP daemons
+        # They confine dhcpd, dhclient and kea-dhcp4 to their standard paths;
+        # the test keeps configs, scripts and lease files in a temp dir.
+        run: |
+          for p in usr.sbin.dhcpd sbin.dhclient usr.sbin.kea-dhcp4 usr.sbin.dhcrelay; do
+            if [ -e "/etc/apparmor.d/$p" ]; then
+              sudo apparmor_parser -R "/etc/apparmor.d/$p" || true
+            fi
+          done
+
+      - name: Versions
+        run: |
+          uname -r
+          case "${{ matrix.server }}" in
+          dnsmasq|libvirt) dnsmasq --version | head -n 1 ;;
+          kea) kea-dhcp4 -V | head -n 1 ;;
+          isc) dhcpd --version 2>&1 ;;
+          esac
+          busybox | head -n 1; dhclient --version 2>&1; dhcpcd --version | head -n 1
+
+      - name: Build
+        run: make
+
+      - name: Interop tests
+        run: |
+          sudo REQUIRE=1 LOGDIR="$PWD/interop-logs" \
+            make interop SERVERS=${{ matrix.server }} RELAY=${{ matrix.relay }}
+
+      - name: Collect logs
+        if: failure()
+        run: sudo chmod -R a+rX interop-logs 2>/dev/null || true
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: interop-logs-${{ matrix.server }}-relay${{ matrix.relay }}
+          path: interop-logs
+          if-no-files-found: ignore
