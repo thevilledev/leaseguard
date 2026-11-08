@@ -11,8 +11,8 @@ no packets go to userspace.
 On a hardware switch this is called DHCP snooping, IP Source Guard and Dynamic
 ARP Inspection.
 
-> **Status: early.** Tested with dnsmasq and udhcpc on Linux 6.18. Start in
-> monitor mode.
+> **Status: early.** Tested with dnsmasq, Kea, ISC dhcpd and libvirt, and with
+> udhcpc, dhclient and dhcpcd. Start in monitor mode.
 
 ## Quick start
 
@@ -214,9 +214,18 @@ make unit                   # lease file parsers
 sudo make test              # datapath through the verifier (BPF_PROG_TEST_RUN)
 sudo make e2e               # bridge, dnsmasq, udhcpc and an attacker in netns
 sudo ATTACH=tc make e2e     # same, with tc attachment
+sudo make interop           # real DHCP servers and clients, see below
 ```
 
 The e2e test needs iproute2, util-linux, dnsmasq, busybox, ping and python3.
+
+`make interop` runs leaseguard between each DHCP server and client it can
+find: dnsmasq, Kea, ISC dhcpd and libvirt's lease helper, against busybox
+udhcpc, ISC dhclient and dhcpcd. Each pair checks snooping, renewal, release
+and importing the server's lease file. Narrow it down with `SERVERS=kea`,
+`CLIENTS=dhcpcd`, and put the server behind ISC dhcrelay with `RELAY=1`.
+Pairs whose tools are missing are skipped. On Ubuntu, unload the AppArmor
+profiles of dhcpd, dhclient and kea-dhcp4 first (see `tests/interop.sh`).
 
 ## Prior art
 
