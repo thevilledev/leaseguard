@@ -1,0 +1,40 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        attach: [auto, tc]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang llvm libbpf-dev make gcc iproute2 dnsmasq-base busybox iputils-ping
+
+      - name: Build
+        run: make
+
+      - name: Kernel
+        run: uname -r
+
+      - name: Lease file and import tests
+        run: make unit
+
+      - name: Datapath tests
+        run: sudo make test
+
+      - name: End-to-end tests
+        run: sudo ATTACH=${{ matrix.attach }} make e2e

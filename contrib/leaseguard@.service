@@ -1,0 +1,26 @@
+# leaseguard for one bridge: systemctl enable --now leaseguard@br0
+#
+# Options go in /etc/default/leaseguard-<bridge>, for example:
+#   LEASEGUARD_OPTS="--trusted eno1 --mode monitor --static /etc/leaseguard/br0.static"
+[Unit]
+Description=leaseguard DHCP snooping and source guard for bridge %i
+Documentation=https://github.com/thevilledev/leaseguard
+After=network.target sys-fs-bpf.mount
+Wants=sys-fs-bpf.mount
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/leaseguard-%i
+ExecStart=/usr/local/sbin/leaseguard run --bridge %i $LEASEGUARD_OPTS
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2s
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
